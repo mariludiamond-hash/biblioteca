@@ -4,17 +4,18 @@ declare(strict_types=1);
 /**
  * Funciones principales del sistema de biblioteca.
  *
- * Este archivo concentra la lógica de negocio y las operaciones de acceso a datos
- * relacionadas con libros, usuarios y préstamos.
+ * Este archivo concentra la lógica de negocio y las operaciones
+ * de acceso a datos relacionadas con libros, usuarios y préstamos.
  */
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/exceptions.php';
 
 /**
  * Escapa texto para salida HTML segura.
  *
  * @param string|null $texto Texto a escapar.
- * @return string Texto escapado.
+ * @return string Texto escapado para HTML.
  */
 function e(?string $texto): string
 {
@@ -22,7 +23,7 @@ function e(?string $texto): string
 }
 
 /**
- * Registra un mensaje en el archivo de errores.
+ * Registra un mensaje de error en el archivo de log.
  *
  * @param string $mensaje Mensaje de error a registrar.
  * @return void
@@ -37,10 +38,10 @@ function registrar_error(string $mensaje): void
 }
 
 /**
- * Valida que una dirección de correo tenga formato correcto.
+ * Valida el formato de un correo electrónico.
  *
- * @param string $email Correo electrónico a validar.
- * @return bool True si el formato es válido; false en caso contrario.
+ * @param string $email Correo a validar.
+ * @return bool Retorna true si el correo es válido.
  */
 function validar_email(string $email): bool
 {
@@ -54,7 +55,7 @@ function validar_email(string $email): bool
  * @param string $titulo Título del libro.
  * @param string $autor Autor del libro.
  * @param int $copias Cantidad de copias disponibles.
- * @return string Mensaje de resultado.
+ * @return string Mensaje de resultado de la operación.
  */
 function registrar_libro(string $isbn, string $titulo, string $autor, int $copias): string
 {
@@ -93,7 +94,7 @@ function registrar_libro(string $isbn, string $titulo, string $autor, int $copia
 }
 
 /**
- * Busca libros por ISBN, título o autor.
+ * Busca libros por coincidencia en ISBN, título o autor.
  *
  * @param string $termino Término de búsqueda.
  * @return array<int, array<string, mixed>> Lista de libros encontrados.
@@ -117,9 +118,9 @@ function buscar_libros(string $termino): array
             ':termino' => '%' . $termino . '%',
         ]);
 
-        /** @var array<int, array<string, mixed>> $resultados */
-        $resultados = $stmt->fetchAll();
-        return $resultados;
+        /** @var array<int, array<string, mixed>> $libros */
+        $libros = $stmt->fetchAll();
+        return $libros;
     } catch (PDOException $e) {
         registrar_error('Error al buscar libros: ' . $e->getMessage());
         return [];
@@ -127,7 +128,7 @@ function buscar_libros(string $termino): array
 }
 
 /**
- * Obtiene un libro por su identificador.
+ * Obtiene la información de un libro por su identificador.
  *
  * @param int $libro_id Identificador del libro.
  * @return array<string, mixed>|null Datos del libro o null si no existe.
@@ -152,7 +153,7 @@ function obtener_libro(int $libro_id): ?array
 }
 
 /**
- * Obtiene todos los libros registrados.
+ * Obtiene el catálogo completo de libros.
  *
  * @return array<int, array<string, mixed>> Lista de libros.
  */
@@ -179,7 +180,7 @@ function obtener_todos_libros(): array
  * @param string $nombre Nombre completo del usuario.
  * @param string $email Correo electrónico del usuario.
  * @param string $tipo Tipo de usuario: estudiante o profesor.
- * @return string Mensaje de resultado.
+ * @return string Mensaje de resultado de la operación.
  */
 function registrar_usuario(string $nombre, string $email, string $tipo): string
 {
@@ -221,10 +222,10 @@ function registrar_usuario(string $nombre, string $email, string $tipo): string
 }
 
 /**
- * Verifica si un usuario existe y está activo.
+ * Verifica si un usuario existe y se encuentra activo.
  *
  * @param int $usuario_id Identificador del usuario.
- * @return bool True si el usuario existe y está activo; false en caso contrario.
+ * @return bool True si el usuario está activo.
  */
 function verificar_usuario_activo(int $usuario_id): bool
 {
@@ -238,7 +239,6 @@ function verificar_usuario_activo(int $usuario_id): bool
         ]);
 
         $usuario = $stmt->fetch();
-
         return $usuario !== false && $usuario['estado'] === 'activo';
     } catch (PDOException $e) {
         registrar_error('Error al verificar usuario: ' . $e->getMessage());
@@ -247,7 +247,7 @@ function verificar_usuario_activo(int $usuario_id): bool
 }
 
 /**
- * Obtiene todos los usuarios registrados.
+ * Obtiene el listado completo de usuarios.
  *
  * @return array<int, array<string, mixed>> Lista de usuarios.
  */
@@ -269,11 +269,12 @@ function obtener_todos_usuarios(): array
 }
 
 /**
- * Realiza un préstamo si el usuario está activo y el libro tiene stock.
+ * Realiza un préstamo validando usuario activo, existencia del libro
+ * y disponibilidad de copias.
  *
  * @param int $libro_id Identificador del libro.
  * @param int $usuario_id Identificador del usuario.
- * @return string Mensaje de resultado.
+ * @return string Mensaje de resultado de la operación.
  */
 function realizar_prestamo(int $libro_id, int $usuario_id): string
 {
@@ -287,22 +288,21 @@ function realizar_prestamo(int $libro_id, int $usuario_id): string
         $conexion->beginTransaction();
 
         if (!verificar_usuario_activo($usuario_id)) {
-            throw new Exception('El usuario está suspendido o no existe.');
+            throw new UsuarioSuspendidoError('El usuario está suspendido o no existe.');
         }
 
         $libro = obtener_libro($libro_id);
 
         if ($libro === null) {
-            throw new Exception('El libro no existe.');
+            throw new LibroNoEncontradoError('El libro no existe.');
         }
 
         if ((int)$libro['copias_disponibles'] <= 0) {
-            throw new Exception('No hay copias disponibles de este libro.');
+            throw new SinStockError('No hay copias disponibles de este libro.');
         }
 
         $sqlPrestamo = 'INSERT INTO prestamos (libro_id, usuario_id, fecha_prestamo, estado)
                         VALUES (:libro_id, :usuario_id, CURDATE(), :estado)';
-
         $stmtPrestamo = $conexion->prepare($sqlPrestamo);
         $stmtPrestamo->execute([
             ':libro_id' => $libro_id,
@@ -310,53 +310,59 @@ function realizar_prestamo(int $libro_id, int $usuario_id): string
             ':estado' => 'activo',
         ]);
 
-        $sqlActualizar = 'UPDATE libros
-                          SET copias_disponibles = copias_disponibles - 1
-                          WHERE id = :id';
-
-        $stmtActualizar = $conexion->prepare($sqlActualizar);
-        $stmtActualizar->execute([
+        $sqlActualizarCopias = 'UPDATE libros
+                                SET copias_disponibles = copias_disponibles - 1
+                                WHERE id = :id';
+        $stmtActualizarCopias = $conexion->prepare($sqlActualizarCopias);
+        $stmtActualizarCopias->execute([
             ':id' => $libro_id,
         ]);
 
-        $sqlRevisar = 'SELECT copias_disponibles FROM libros WHERE id = :id';
-        $stmtRevisar = $conexion->prepare($sqlRevisar);
-        $stmtRevisar->execute([
+        $sqlConsultar = 'SELECT copias_disponibles FROM libros WHERE id = :id';
+        $stmtConsultar = $conexion->prepare($sqlConsultar);
+        $stmtConsultar->execute([
             ':id' => $libro_id,
         ]);
 
-        $libroActualizado = $stmtRevisar->fetch();
+        $libroActualizado = $stmtConsultar->fetch();
 
         if ($libroActualizado === false) {
-            throw new Exception('No fue posible actualizar el libro.');
+            throw new LibroNoEncontradoError('No fue posible actualizar el estado del libro.');
         }
 
         $nuevoEstado = ((int)$libroActualizado['copias_disponibles'] > 0) ? 'disponible' : 'prestado';
 
-        $sqlEstado = 'UPDATE libros SET estado = :estado WHERE id = :id';
-        $stmtEstado = $conexion->prepare($sqlEstado);
-        $stmtEstado->execute([
+        $sqlActualizarEstado = 'UPDATE libros SET estado = :estado WHERE id = :id';
+        $stmtActualizarEstado = $conexion->prepare($sqlActualizarEstado);
+        $stmtActualizarEstado->execute([
             ':estado' => $nuevoEstado,
             ':id' => $libro_id,
         ]);
 
         $conexion->commit();
         return 'Préstamo realizado correctamente.';
+    } catch (LibroNoEncontradoError | UsuarioSuspendidoError | SinStockError $e) {
+        if ($conexion->inTransaction()) {
+            $conexion->rollBack();
+        }
+
+        registrar_error('Error de negocio en préstamo: ' . $e->getMessage());
+        return 'Error: ' . $e->getMessage();
     } catch (Throwable $e) {
         if ($conexion->inTransaction()) {
             $conexion->rollBack();
         }
 
-        registrar_error('Error al realizar préstamo: ' . $e->getMessage());
-        return 'Error: ' . $e->getMessage();
+        registrar_error('Error técnico al realizar préstamo: ' . $e->getMessage());
+        return 'Error interno del sistema al procesar el préstamo.';
     }
 }
 
 /**
- * Devuelve un libro prestado y actualiza su disponibilidad.
+ * Registra la devolución de un libro y actualiza su disponibilidad.
  *
  * @param int $prestamo_id Identificador del préstamo.
- * @return string Mensaje de resultado.
+ * @return string Mensaje de resultado de la operación.
  */
 function devolver_libro(int $prestamo_id): string
 {
@@ -385,7 +391,6 @@ function devolver_libro(int $prestamo_id): string
         $sqlActualizarPrestamo = 'UPDATE prestamos
                                   SET fecha_devolucion = CURDATE(), estado = :estado
                                   WHERE id = :id';
-
         $stmtActualizarPrestamo = $conexion->prepare($sqlActualizarPrestamo);
         $stmtActualizarPrestamo->execute([
             ':estado' => 'devuelto',
@@ -396,7 +401,6 @@ function devolver_libro(int $prestamo_id): string
                                SET copias_disponibles = copias_disponibles + 1,
                                    estado = :estado
                                WHERE id = :libro_id';
-
         $stmtActualizarLibro = $conexion->prepare($sqlActualizarLibro);
         $stmtActualizarLibro->execute([
             ':estado' => 'disponible',
@@ -416,7 +420,7 @@ function devolver_libro(int $prestamo_id): string
 }
 
 /**
- * Obtiene el historial de préstamos con nombre de libro y usuario.
+ * Obtiene el historial completo de préstamos con datos del libro y usuario.
  *
  * @return array<int, array<string, mixed>> Lista de préstamos.
  */
@@ -425,7 +429,7 @@ function obtener_prestamos(): array
     global $conexion;
 
     try {
-        $sql = 'SELECT 
+        $sql = 'SELECT
                     p.id,
                     l.titulo,
                     u.nombre,
